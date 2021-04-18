@@ -7,22 +7,27 @@ import 'package:http/http.dart' as http;
 
 final _rand = Random();
 
+//TODO: comply with section 4 of the spec
+
 class RobustIrcServer {
-  final String hostname;
+  final String host;
   final int port;
 
-  RobustIrcServer(this.hostname, this.port);
+  RobustIrcServer(this.host, this.port);
 
   static RobustIrcServer fromDns(Answer answer) =>
       fromDnsData(answer.data.split(' '));
   static RobustIrcServer fromDnsData(List<String> data) =>
       RobustIrcServer(data[3], int.parse(data[2]));
+
+  @override
+  String toString() => '$host:$port';
 }
 
 class RobustIrc {
   final String hostname;
   final String prefix;
-  List<InternetAddress> servers;
+  List<RobustIrcServer> servers;
   final String sessionId, sessionAuth;
   final String userAgent;
 
@@ -35,15 +40,33 @@ class RobustIrc {
     this.prefix,
   );
 
-  static RobustIrcServer _pickServer(List<RobustIrcServer> servers) =>
-      servers[_rand.nextInt(servers.length)];
-
-  static Future<HttpClientRequest> _connectToServer(
-      List<RobustIrcServer> servers, String path) async {
-    final http = HttpClient();
-    final server = _pickServer(servers);
-    return http.open('POST', host, port, path);
+  static Future<T> _retry<T>(Future<T> Function() f) {
+    try {
+      return f();
+    } on Exception {
+      return _retry(f);
+    }
   }
+
+  static Map<String, String>? _headers(String ua, String? sa) {
+    final h = {'User-Agent': ua};
+    if (sa != null) h['X-Session-Auth'] = sa;
+    return h;
+  }
+
+  static Uri _makeuri(List<RobustIrcServer> servers, String path) {
+    final server = servers[_rand.nextInt(servers.length)];
+    return Uri.https('$server', '/robustirc/v1$path');
+  }
+
+  static Future<String> _postToServer(List<RobustIrcServer> servers,
+          String path, Object body, String userAgent, [String? sessionAuth]) =>
+      _retry(() => http
+          .post(_makeuri(servers, path),
+              encoding: utf8,
+              body: body,
+              headers: _headers(userAgent, sessionAuth))
+          .then((value) => value.body));
 
   static Future<List<RobustIrcServer>?> _lookupServers(String hostname) async =>
       DnsRecord.fromJson(jsonDecode((await http.get(
@@ -65,6 +88,16 @@ class RobustIrc {
     servers ??= lookupHostname
         ? await _lookupServers(hostname)
         : [RobustIrcServer(hostname, 60667)];
-    return RobustIrc(hostname, servers, userAgent);
+    if (servers == null) throw 'cant get server list';
+    final json =
+        jsonDecode(await _postToServer(servers, '/session', '', userAgent));
+    return RobustIrc(
+      hostname,
+      servers,
+      userAgent,
+      json['Sessionid'],
+      json['Sessionauth'],
+      json['Prefix'],
+    );
   }
 }
