@@ -1,8 +1,6 @@
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math';
 
-import 'package:dns_client/dns_client.dart';
 import 'package:http/http.dart' as http;
 
 final _rand = Random();
@@ -15,9 +13,9 @@ class RobustIrcServer {
 
   RobustIrcServer(this.host, this.port);
 
-  static RobustIrcServer fromDns(Answer answer) =>
-      fromDnsData(answer.data.split(' '));
-  static RobustIrcServer fromDnsData(List<String> data) =>
+  static RobustIrcServer fromDns(Map answer) =>
+      fromDnsData(answer['data'].split(' '));
+  static RobustIrcServer fromDnsData(List data) =>
       RobustIrcServer(data[3], int.parse(data[2]));
 
   @override
@@ -72,13 +70,12 @@ class RobustIrc {
           .then((value) => value.body);
 
   static Future<List<RobustIrcServer>?> _lookupServers(String hostname) async =>
-      DnsRecord.fromJson(jsonDecode((await http.get(
+      jsonDecode((await http.get(
                   Uri.https('cloudflare-dns.com', '/dns-query',
                       {'name': '_robustirc._tcp.$hostname', 'type': 'SRV'}),
                   headers: {'accept': 'application/dns-json'}))
-              .body))
-          .answer
-          ?.where((a) => a.type == 33 && a.name.contains('robustirc'))
+              .body)['Answer']
+          ?.where((a) => a['type'] == 33 && a['name'].contains('robustirc'))
           .map((e) => RobustIrcServer.fromDns(e))
           .toList();
 
