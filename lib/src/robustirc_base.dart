@@ -8,17 +8,23 @@ import 'package:http/http.dart' as http;
 final _rand = Random();
 
 class RobustIrcServer {
-  final InternetAddress addr;
+  final String hostname;
   final int port;
 
-  RobustIrcServer(this.addr, this.port);
+  RobustIrcServer(this.hostname, this.port);
+
+  static RobustIrcServer fromDns(Answer answer) =>
+      fromDnsData(answer.data.split(' '));
+  static RobustIrcServer fromDnsData(List<String> data) =>
+      RobustIrcServer(data[3], int.parse(data[2]));
 }
 
 class RobustIrc {
   final String hostname;
+  final String prefix;
   List<InternetAddress> servers;
-  final String userAgent;
   final String sessionId, sessionAuth;
+  final String userAgent;
 
   RobustIrc(
     this.hostname,
@@ -26,6 +32,7 @@ class RobustIrc {
     this.userAgent,
     this.sessionId,
     this.sessionAuth,
+    this.prefix,
   );
 
   static RobustIrcServer _pickServer(List<RobustIrcServer> servers) =>
@@ -38,15 +45,16 @@ class RobustIrc {
     return http.open('POST', host, port, path);
   }
 
-  static Future<DnsRecord> _lookupServers(String hostname,
-      {InternetAddressType type = InternetAddressType.any}) async {
-    final query = {'name': hostname, 'type': 'SRV'};
-    final response = await http.get(
-        Uri.https('https://cloudflare-dns.com/dns-query', _uri.path, query),
-        headers: {'accept': 'application/dns-json'});
-    final record = DnsRecord.fromJson(jsonDecode(response.body));
-    return record;
-  }
+  static Future<List<RobustIrcServer>?> _lookupServers(String hostname) async =>
+      DnsRecord.fromJson(jsonDecode((await http.get(
+                  Uri.https('cloudflare-dns.com', '/dns-query',
+                      {'name': '_robustirc._tcp.$hostname', 'type': 'SRV'}),
+                  headers: {'accept': 'application/dns-json'}))
+              .body))
+          .answer
+          ?.where((a) => a.type == 33 && a.name.contains('robustirc'))
+          .map((e) => RobustIrcServer.fromDns(e))
+          .toList();
 
   static Future<RobustIrc> connect(
     String hostname, {
@@ -54,12 +62,9 @@ class RobustIrc {
     String userAgent = 'robustirc.dart 0.0.1',
     List<RobustIrcServer>? servers,
   }) async {
-    //TODO: the standard forbids this, use SRV record
     servers ??= lookupHostname
-        ? (await DnsOverHttps.cloudflare().lookup(hostname))
-            .map((e) => RobustIrcServer(e, 443))
-            .toList()
-        : [RobustIrcServer(InternetAddress(hostname), 443)];
+        ? await _lookupServers(hostname)
+        : [RobustIrcServer(hostname, 60667)];
     return RobustIrc(hostname, servers, userAgent);
   }
 }
