@@ -100,4 +100,11 @@ class RobustIrc {
       json['Prefix'],
     );
   }
+
+  Future<void> close(String msg) => http.delete(
+        _makeuri(servers, '/$sessionId'),
+        headers: _headers(userAgent, sessionAuth),
+        encoding: utf8,
+        body: jsonEncode({'Quitmessage': msg}),
+      );
 }
