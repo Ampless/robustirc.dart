@@ -40,7 +40,7 @@ class RobustIrc {
     this.prefix,
   );
 
-  static Future<T> _retry<T>(Future<T> Function() f) {
+  static Future<http.Response> _retry(Future<http.Response> Function() f) {
     try {
       return f();
     } on Exception {
@@ -48,11 +48,13 @@ class RobustIrc {
     }
   }
 
-  static Map<String, String>? _headers(String ua, String? sa) {
+  static Map<String, String> _sHeaders(String ua, String? sa) {
     final h = {'User-Agent': ua};
     if (sa != null) h['X-Session-Auth'] = sa;
     return h;
   }
+
+  Map<String, String> get _headers => _sHeaders(userAgent, sessionAuth);
 
   static Uri _makeuri(List<RobustIrcServer> servers, String path) {
     final server = servers[_rand.nextInt(servers.length)];
@@ -61,12 +63,11 @@ class RobustIrc {
 
   static Future<String> _postToServer(List<RobustIrcServer> servers,
           String path, Object body, String userAgent, [String? sessionAuth]) =>
-      _retry(() => http
-          .post(_makeuri(servers, path),
+      _retry(() => http.post(_makeuri(servers, path),
               encoding: utf8,
               body: body,
-              headers: _headers(userAgent, sessionAuth))
-          .then((value) => value.body));
+              headers: _sHeaders(userAgent, sessionAuth)))
+          .then((value) => value.body);
 
   static Future<List<RobustIrcServer>?> _lookupServers(String hostname) async =>
       DnsRecord.fromJson(jsonDecode((await http.get(
@@ -101,10 +102,25 @@ class RobustIrc {
     );
   }
 
-  Future<void> close(String msg) => http.delete(
+  Future<int> close(String msg) => _retry(() => http.delete(
         _makeuri(servers, '/$sessionId'),
-        headers: _headers(userAgent, sessionAuth),
+        headers: _headers,
         encoding: utf8,
         body: jsonEncode({'Quitmessage': msg}),
-      );
+      )).then((value) => value.statusCode);
+
+  int generateMessageId(String msg) =>
+      msg.hashCode << 32 | _rand.nextInt(1 << 32);
+
+  Future<int> postMessage(String msg, [int? id]) {
+    id ??= generateMessageId(msg);
+    return _retry(() => http.post(
+          _makeuri(servers, '/$sessionId/message'),
+          headers: _headers,
+          encoding: utf8,
+          body: jsonEncode({'Data': msg, 'ClientMessageId': id}),
+        )).then((value) => value.statusCode);
+  }
+
+  Future<void> ping() => postMessage('PING');
 }
