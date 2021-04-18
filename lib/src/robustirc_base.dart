@@ -30,6 +30,7 @@ class RobustIrc {
   List<RobustIrcServer> servers;
   final String sessionId, sessionAuth;
   final String userAgent;
+  final http.Client _client = http.Client();
 
   RobustIrc(
     this.hostname,
@@ -40,7 +41,7 @@ class RobustIrc {
     this.prefix,
   );
 
-  static Future<http.Response> _retry(Future<http.Response> Function() f) {
+  static Future<T> _retry<T>(Future<T> Function() f) {
     try {
       return f();
     } on Exception {
@@ -56,9 +57,10 @@ class RobustIrc {
 
   Map<String, String> get _headers => _sHeaders(userAgent, sessionAuth);
 
-  static Uri _makeuri(List<RobustIrcServer> servers, String path) {
+  static Uri _makeuri(List<RobustIrcServer> servers, String path,
+      [Map<String, dynamic> params = const {}]) {
     final server = servers[_rand.nextInt(servers.length)];
-    return Uri.https('$server', '/robustirc/v1$path');
+    return Uri.https('$server', '/robustirc/v1$path', params);
   }
 
   static Future<String> _postToServer(List<RobustIrcServer> servers,
@@ -102,7 +104,7 @@ class RobustIrc {
     );
   }
 
-  Future<int> close(String msg) => _retry(() => http.delete(
+  Future<int> close(String msg) => _retry(() => _client.delete(
         _makeuri(servers, '/$sessionId'),
         headers: _headers,
         encoding: utf8,
@@ -114,7 +116,7 @@ class RobustIrc {
 
   Future<int> postMessage(String msg, [int? id]) {
     id ??= generateMessageId(msg);
-    return _retry(() => http.post(
+    return _retry(() => _client.post(
           _makeuri(servers, '/$sessionId/message'),
           headers: _headers,
           encoding: utf8,
@@ -123,4 +125,8 @@ class RobustIrc {
   }
 
   Future<void> ping() => postMessage('PING');
+
+  Future<http.StreamedResponse> getMessages([String lastseen = '0']) =>
+      _retry(() => _client.send(http.Request('GET',
+          _makeuri(servers, '/$sessionId/messages', {'lastseen': lastseen}))));
 }
