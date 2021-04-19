@@ -1,6 +1,6 @@
 name: robustirc
 description: A RobustIRC implementation in Dart
-version: 0.0.1
+version: 0.0.2
 homepage: https://github.com/Ampless/robustirc.dart
 
 environment:

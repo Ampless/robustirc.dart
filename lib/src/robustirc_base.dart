@@ -76,7 +76,7 @@ class RobustIrc {
                   headers: {'accept': 'application/dns-json'}))
               .body)['Answer']
           ?.where((a) => a['type'] == 33 && a['name'].contains('robustirc'))
-          .map((e) => RobustIrcServer.fromDns(e))
+          .map<RobustIrcServer>((e) => RobustIrcServer.fromDns(e))
           .toList();
 
   static Future<RobustIrc> connect(
@@ -123,7 +123,10 @@ class RobustIrc {
 
   Future<void> ping() => postMessage('PING');
 
-  Future<http.StreamedResponse> getMessages([String lastseen = '0']) =>
-      _retry(() => _client.send(http.Request('GET',
-          _makeuri(servers, '/$sessionId/messages', {'lastseen': lastseen}))));
+  Future<http.StreamedResponse> getMessages([String? lastseen]) =>
+      _retry(() => _client.send(http.Request(
+          'GET',
+          _makeuri(servers, '/$sessionId/messages',
+              lastseen != null ? {'lastseen': lastseen} : {}))
+        ..headers['X-Session-Auth'] = sessionAuth));
 }
