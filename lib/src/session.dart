@@ -3,24 +3,11 @@ import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
+import 'server.dart';
+
 final _rand = Random();
 
-//TODO: comply with section 4 of the spec
-
-class RobustIrcServer {
-  final String host;
-  final int port;
-
-  RobustIrcServer(this.host, this.port);
-
-  static RobustIrcServer fromDns(Map answer) =>
-      fromDnsData(answer['data'].split(' '));
-  static RobustIrcServer fromDnsData(List data) =>
-      RobustIrcServer(data[3], int.parse(data[2]));
-
-  @override
-  String toString() => '$host:$port';
-}
+//TODO: use the leader when pinged (and fix thundering herd)
 
 class RobustIrc {
   final String hostname;
@@ -39,11 +26,12 @@ class RobustIrc {
     this.prefix,
   );
 
-  static Future<T> _retry<T>(Future<T> Function() f) {
+  static Future<T> _retry<T>(Future<T> Function() f, [int dly = 1]) {
+    dly &= 0xff; //delay for at most 128 seconds
     try {
       return f();
     } on Exception {
-      return _retry(f);
+      return Future.delayed(Duration(seconds: dly), () => _retry(f, dly * 2));
     }
   }
 

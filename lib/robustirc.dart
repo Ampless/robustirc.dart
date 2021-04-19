@@ -1,3 +1,4 @@
 library robustirc;
 
-export 'src/robustirc_base.dart';
+export 'src/server.dart';
+export 'src/session.dart';
