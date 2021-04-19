@@ -7,9 +7,9 @@ import 'server.dart';
 
 final _rand = Random();
 
-//TODO: use the leader when pinged (and fix thundering herd)
+//TODO: cache currently used server (and fix thundering herd)
 
-class RobustIrc {
+class RobustSession {
   final String hostname;
   final String prefix;
   List<RobustIrcServer> servers;
@@ -17,7 +17,7 @@ class RobustIrc {
   final String userAgent;
   final http.Client _client = http.Client();
 
-  RobustIrc(
+  RobustSession(
     this.hostname,
     this.servers,
     this.userAgent,
@@ -67,7 +67,7 @@ class RobustIrc {
           .map<RobustIrcServer>((e) => RobustIrcServer.fromDns(e))
           .toList();
 
-  static Future<RobustIrc> connect(
+  static Future<RobustSession> connect(
     String hostname, {
     bool lookupHostname = true,
     String userAgent = 'robustirc.dart 0.0.1',
@@ -79,7 +79,7 @@ class RobustIrc {
     if (servers == null) throw 'cant get server list';
     final json =
         jsonDecode(await _postToServer(servers, '/session', '', userAgent));
-    return RobustIrc(
+    return RobustSession(
       hostname,
       servers,
       userAgent,
@@ -89,7 +89,7 @@ class RobustIrc {
     );
   }
 
-  Future<int> close(String msg) => _retry(() => _client.delete(
+  Future<int> quit(String msg) => _retry(() => _client.delete(
         _makeuri(servers, '/$sessionId'),
         headers: _headers,
         encoding: utf8,
@@ -111,10 +111,28 @@ class RobustIrc {
 
   Future<void> ping() => postMessage('PING');
 
-  Future<http.StreamedResponse> getMessages([String? lastseen]) =>
+  void getMessages(Function(String, String) ircHandler,
+          {Function()? pingHandler, String? lastseen}) =>
       _retry(() => _client.send(http.Request(
           'GET',
           _makeuri(servers, '/$sessionId/messages',
               lastseen != null ? {'lastseen': lastseen} : {}))
-        ..headers['X-Session-Auth'] = sessionAuth));
+        ..headers['X-Session-Auth'] = sessionAuth)).then((res) =>
+          res.stream.transform(utf8.decoder).map(jsonDecode).forEach((packet) {
+            final type = packet['Type'];
+            if (type == 4) {
+              servers = packet['Servers']
+                  .map((s) => s.split(':'))
+                  .map<RobustIrcServer>(
+                      (s) => RobustIrcServer(s[0], int.parse(s[1])))
+                  .toList();
+              if (pingHandler != null) pingHandler();
+            } else if (type == 3) {
+              final id = '${packet['Id']['Id']}.${packet['Id']['Reply']}';
+              final data = packet['Data'];
+              ircHandler(id, data);
+            } else {
+              throw 'Unknown packet type: $type';
+            }
+          }));
 }
