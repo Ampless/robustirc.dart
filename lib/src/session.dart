@@ -3,9 +3,11 @@ import 'dart:math';
 
 import 'package:http/http.dart' as http;
 
+import 'retry_http.dart';
 import 'server.dart';
 
 final _rand = Random();
+T _randElement<T>(List<T> l) => l[_rand.nextInt(l.length)];
 
 //TODO: fix thundering herd (section 4 of the spec)
 
@@ -16,7 +18,7 @@ class RobustSession {
   List<RobustIrcServer> servers;
   final String sessionId, sessionAuth;
   final String userAgent;
-  final http.Client _client = http.Client();
+  final http.Client _client;
 
   RobustSession(
     this.hostname,
@@ -25,44 +27,20 @@ class RobustSession {
     this.sessionId,
     this.sessionAuth,
     this.prefix,
-  ) : currentServer = servers[_rand.nextInt(servers.length)];
+    this.currentServer,
+    this._client,
+  );
 
-  void _regenServer() => currentServer = servers[_rand.nextInt(servers.length)];
+  RobustIrcServer _regenServer() =>
+      currentServer = servers[_rand.nextInt(servers.length)];
 
-  static Future<T> _retry<T>(Future<T> Function(bool) f,
-      [bool retried = false, int dly = 1]) {
-    dly &= 0xff; //delay for at most 128 seconds
-    try {
-      return f(retried);
-    } on Exception {
-      return Future.delayed(
-          Duration(seconds: dly), () => _retry(f, true, dly * 2));
-    }
-  }
-
-  static Map<String, String> _sHeaders(String ua, String? sa) {
+  static Map<String, String> _sHeaders(String ua, [String? sa]) {
     final h = {'User-Agent': ua};
     if (sa != null) h['X-Session-Auth'] = sa;
     return h;
   }
 
   Map<String, String> get _headers => _sHeaders(userAgent, sessionAuth);
-
-  static Uri _makeuri(
-      RobustIrcServer server, Function() regenServer, String path, bool retried,
-      [Map<String, dynamic> params = const {}]) {
-    if (retried) regenServer();
-    return Uri.https('$server', '/robustirc/v1$path', params);
-  }
-
-  static Future<String> _postToServer(List<RobustIrcServer> servers,
-          String path, Object body, String userAgent, [String? sessionAuth]) =>
-      _retry((r) => http.post(
-              _makeuri(servers[_rand.nextInt(servers.length)], () {}, path, r),
-              encoding: utf8,
-              body: body,
-              headers: _sHeaders(userAgent, sessionAuth)))
-          .then((value) => value.body);
 
   static Future<List<RobustIrcServer>?> _lookupServers(String hostname) async =>
       jsonDecode((await http.get(
@@ -84,8 +62,18 @@ class RobustSession {
         ? await _lookupServers(hostname)
         : [RobustIrcServer(hostname, 60667)];
     if (servers == null) throw 'cant get server list';
-    final json =
-        jsonDecode(await _postToServer(servers, '/session', '', userAgent));
+    var currentServer = _randElement(servers);
+    final client = http.Client();
+    final json = jsonDecode(await (await retryHttp(
+      server: currentServer,
+      path: '/session',
+      client: client,
+      method: 'POST',
+      newServer: () => currentServer = _randElement(servers!),
+      headers: _sHeaders(userAgent),
+    ))
+        .stream
+        .bytesToString());
     return RobustSession(
       hostname,
       servers,
@@ -93,38 +81,53 @@ class RobustSession {
       json['Sessionid'],
       json['Sessionauth'],
       json['Prefix'],
+      currentServer,
+      client,
     );
   }
 
-  Future<int> quit(String msg) => _retry((r) => _client.delete(
-        _makeuri(currentServer, _regenServer, '/$sessionId', r),
+  Future<int> quit(String msg) => retryHttp(
+        method: 'DELETE',
+        path: '/$sessionId',
+        server: currentServer,
         headers: _headers,
-        encoding: utf8,
         body: jsonEncode({'Quitmessage': msg}),
-      )).then((value) => value.statusCode);
+        client: _client,
+        newServer: _regenServer,
+      ).then((value) => value.statusCode);
 
   int generateMessageId(String msg) =>
       msg.hashCode << 32 | _rand.nextInt(1 << 32);
 
   Future<int> postMessage(String msg, [int? id]) {
     id ??= generateMessageId(msg);
-    return _retry((r) => _client.post(
-          _makeuri(currentServer, _regenServer, '/$sessionId/message', r),
-          headers: _headers,
-          encoding: utf8,
-          body: jsonEncode({'Data': msg, 'ClientMessageId': id}),
-        )).then((value) => value.statusCode);
+    return retryHttp(
+      method: 'POST',
+      path: '/$sessionId/message',
+      server: currentServer,
+      headers: _headers,
+      body: jsonEncode({'Data': msg, 'ClientMessageId': id}),
+      client: _client,
+      newServer: _regenServer,
+    ).then((value) => value.statusCode);
   }
 
   Future<void> ping() => postMessage('PING');
+  Future<void> nick(String name) => postMessage('NICK $name');
+  Future<void> user(String user, int mode, String realname) =>
+      postMessage('USER $user $mode * :$realname');
 
   void getMessages(Function(String, String) ircHandler,
           {Function()? pingHandler, String? lastseen}) =>
-      _retry((r) => _client.send(http.Request(
-          'GET',
-          _makeuri(currentServer, _regenServer, '/$sessionId/messages', r,
-              lastseen != null ? {'lastseen': lastseen} : {}))
-        ..headers['X-Session-Auth'] = sessionAuth)).then((res) =>
+      retryHttp(
+        method: 'GET',
+        path: '/$sessionId/messages',
+        server: currentServer,
+        headers: _headers,
+        client: _client,
+        newServer: _regenServer,
+        queryParameters: lastseen != null ? {'lastseen': lastseen} : {},
+      ).then((res) =>
           res.stream.transform(utf8.decoder).map(jsonDecode).forEach((packet) {
             final type = packet['Type'];
             if (type == 4) {
@@ -135,7 +138,8 @@ class RobustSession {
                   .toList();
               if (pingHandler != null) pingHandler();
             } else if (type == 3) {
-              final id = '${packet['Id']['Id']}.${packet['Id']['Reply']}';
+              final jid = packet['Id'];
+              final id = '${jid['Id']}.${jid['Reply']}';
               final data = packet['Data'];
               ircHandler(id, data);
             } else {
