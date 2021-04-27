@@ -12,5 +12,5 @@ void main(List<String> args) async {
   session.getMessages((id, data) => print(data));
   stdin.transform(utf8.decoder).transform(LineSplitter()).listen((s) async {
     print(await session.postMessage(s));
-  }, onDone: () async => print(await session.quit('rawirc - stdin closed')));
+  }, onDone: () => session.quit('rawirc - stdin closed').then((_) => exit(0)));
 }
