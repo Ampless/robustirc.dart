@@ -9,7 +9,15 @@ import 'server.dart';
 final _rand = Random();
 T _randElement<T>(List<T> l) => l[_rand.nextInt(l.length)];
 
-//TODO: fix thundering herd (section 4 of the spec)
+Future<List<RobustIrcServer>?> _lookupServers(String hostname) async =>
+    jsonDecode((await http.get(
+                Uri.https('cloudflare-dns.com', '/dns-query',
+                    {'name': '_robustirc._tcp.$hostname', 'type': 'SRV'}),
+                headers: {'accept': 'application/dns-json'}))
+            .body)['Answer']
+        ?.where((a) => a['type'] == 33 && a['name'].contains('robustirc'))
+        .map<RobustIrcServer>((e) => RobustIrcServer.fromDns(e))
+        .toList();
 
 class RobustSession {
   final String hostname;
@@ -42,20 +50,10 @@ class RobustSession {
 
   Map<String, String> get _headers => _sHeaders(userAgent, sessionAuth);
 
-  static Future<List<RobustIrcServer>?> _lookupServers(String hostname) async =>
-      jsonDecode((await http.get(
-                  Uri.https('cloudflare-dns.com', '/dns-query',
-                      {'name': '_robustirc._tcp.$hostname', 'type': 'SRV'}),
-                  headers: {'accept': 'application/dns-json'}))
-              .body)['Answer']
-          ?.where((a) => a['type'] == 33 && a['name'].contains('robustirc'))
-          .map<RobustIrcServer>((e) => RobustIrcServer.fromDns(e))
-          .toList();
-
   static Future<RobustSession> connect(
     String hostname, {
     bool lookupHostname = true,
-    String userAgent = 'robustirc.dart 0.0.1',
+    String userAgent = 'robustirc.dart 0.1.0',
     List<RobustIrcServer>? servers,
   }) async {
     servers ??= lookupHostname
@@ -71,6 +69,7 @@ class RobustSession {
       method: 'POST',
       newServer: () => currentServer = _randElement(servers!),
       headers: _sHeaders(userAgent),
+      rand: _rand,
     ))
         .stream
         .bytesToString());
@@ -94,6 +93,7 @@ class RobustSession {
         body: jsonEncode({'Quitmessage': msg}),
         client: _client,
         newServer: _regenServer,
+        rand: _rand,
       ).then((value) => value.statusCode);
 
   int generateMessageId(String msg) =>
@@ -109,6 +109,7 @@ class RobustSession {
       body: jsonEncode({'Data': msg, 'ClientMessageId': id}),
       client: _client,
       newServer: _regenServer,
+      rand: _rand,
     ).then((value) => value.statusCode);
   }
 
@@ -127,6 +128,7 @@ class RobustSession {
         client: _client,
         newServer: _regenServer,
         queryParameters: lastseen != null ? {'lastseen': lastseen} : {},
+        rand: _rand,
       ).then((res) =>
           res.stream.transform(utf8.decoder).map(jsonDecode).forEach((packet) {
             final type = packet['Type'];

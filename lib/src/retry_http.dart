@@ -14,7 +14,9 @@ Future<http.StreamedResponse> retryHttp(
     Map<String, String> headers = const {},
     required http.Client client,
     required RobustIrcServer Function() newServer,
-    int delay = 1}) async {
+    int delay = 1,
+    int sameServerRetries = 0,
+    required Random rand}) async {
   final req = http.Request(
       method, Uri.https('$server', '/robustirc/v1$path', queryParameters));
   req.encoding = utf8;
@@ -22,20 +24,35 @@ Future<http.StreamedResponse> retryHttp(
   headers.forEach((key, value) => req.headers[key] = value);
   try {
     return await client.send(req);
-  } on Exception {
-    server = newServer();
-    return Future.delayed(
-        Duration(seconds: 1),
-        () => retryHttp(
-              method: method,
-              server: server,
-              path: path,
-              body: body,
-              queryParameters: queryParameters,
-              headers: headers,
-              client: client,
-              newServer: newServer,
-              delay: min(delay * 2, 64),
-            ));
+  } on http.ClientException {
+    return sameServerRetries > 5
+        ? Future.delayed(
+            Duration(milliseconds: rand.nextInt(420) + 250),
+            () => retryHttp(
+                  method: method,
+                  server: newServer(),
+                  path: path,
+                  body: body,
+                  queryParameters: queryParameters,
+                  headers: headers,
+                  client: client,
+                  newServer: newServer,
+                  rand: rand,
+                ))
+        : Future.delayed(
+            Duration(seconds: delay),
+            () => retryHttp(
+                  method: method,
+                  server: server,
+                  path: path,
+                  body: body,
+                  queryParameters: queryParameters,
+                  headers: headers,
+                  client: client,
+                  newServer: newServer,
+                  delay: delay * 2,
+                  sameServerRetries: sameServerRetries + 1,
+                  rand: rand,
+                ));
   }
 }
