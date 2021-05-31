@@ -1,3 +1,4 @@
 # robustirc
-An implementation of a RobustIRC client in Dart.
-If you want a server, feel free to open a GitHub issue.
+An implementation of a RobustSession client in Dart.
+
+If you want to use IRC with it, you will need an external parser for that.

@@ -9,15 +9,18 @@ import 'server.dart';
 final _rand = Random();
 T _randElement<T>(List<T> l) => l[_rand.nextInt(l.length)];
 
-Future<List<RobustIrcServer>?> _lookupServers(String hostname) async =>
-    jsonDecode((await http.get(
-                Uri.https('cloudflare-dns.com', '/dns-query',
-                    {'name': '_robustirc._tcp.$hostname', 'type': 'SRV'}),
-                headers: {'accept': 'application/dns-json'}))
-            .body)['Answer']
-        ?.where((a) => a['type'] == 33 && a['name'].contains('robustirc'))
-        .map<RobustIrcServer>((e) => RobustIrcServer.fromDns(e))
-        .toList();
+Future<List<RobustIrcServer>?> lookupRobustIrcServers(String hostname,
+    {String dnsServer = 'https://cloudflare-dns.com/dns-query'}) async {
+  final uri = Uri.parse(dnsServer);
+  uri.queryParameters['name'] = '_robustirc._tcp.$hostname';
+  uri.queryParameters['type'] = 'SRV';
+  return jsonDecode(
+          (await http.get(uri, headers: {'accept': 'application/dns-json'}))
+              .body)['Answer']
+      ?.where((a) => a['type'] == 33 && a['name'].contains('robustirc'))
+      .map<RobustIrcServer>((e) => RobustIrcServer.fromDns(e))
+      .toList();
+}
 
 class RobustSession {
   final String hostname;
@@ -57,7 +60,7 @@ class RobustSession {
     List<RobustIrcServer>? servers,
   }) async {
     servers ??= lookupHostname
-        ? await _lookupServers(hostname)
+        ? await lookupRobustIrcServers(hostname)
         : [RobustIrcServer(hostname, 60667)];
     if (servers == null) throw 'cant get server list';
     var currentServer = _randElement(servers);
@@ -112,11 +115,6 @@ class RobustSession {
       rand: _rand,
     ).then((value) => value.statusCode);
   }
-
-  Future<void> ping() => postMessage('PING');
-  Future<void> nick(String name) => postMessage('NICK $name');
-  Future<void> user(String user, int mode, String realname) =>
-      postMessage('USER $user $mode * :$realname');
 
   void getMessages(Function(String, String) ircHandler,
           {Function()? pingHandler, String? lastseen}) =>
