@@ -18,7 +18,7 @@ Future<List<RobustIrcServer>?> lookupRobustIrcServers(String hostname,
           (await http.get(uri, headers: {'accept': 'application/dns-json'}))
               .body)['Answer']
       ?.where((a) => a['type'] == 33 && a['name'].contains('robustirc'))
-      .map<RobustIrcServer>((e) => RobustIrcServer.fromDns(e))
+      .map<RobustIrcServer>(RobustIrcServer.fromDns)
       .toList();
 }
 
@@ -45,18 +45,17 @@ class RobustSession {
   RobustIrcServer _regenServer() =>
       currentServer = servers[_rand.nextInt(servers.length)];
 
-  static Map<String, String> _sHeaders(String ua, [String? sa]) {
-    final h = {'User-Agent': ua};
-    if (sa != null) h['X-Session-Auth'] = sa;
-    return h;
-  }
+  static Map<String, String> _sHeaders(String ua, [String? sa]) => {
+        'User-Agent': ua,
+        if (sa != null) 'X-Session-Auth': sa,
+      };
 
   Map<String, String> get _headers => _sHeaders(userAgent, sessionAuth);
 
   static Future<RobustSession> connect(
     String hostname, {
     bool lookupHostname = true,
-    String userAgent = 'robustirc.dart 0.1.0',
+    String userAgent = 'robustirc.dart 0.1',
     List<RobustIrcServer>? servers,
   }) async {
     servers ??= lookupHostname

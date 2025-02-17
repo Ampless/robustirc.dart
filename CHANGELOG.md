@@ -1,3 +1,7 @@
+## 0.1.1
+
+- Update to current tech (`dart 3`, `http 1`, `lints`, ...)
+
 ## 0.1.0
 
 - Changed `getMessages` so that it now parses the messages
